@@ -1,7 +1,14 @@
 from fastapi.testclient import TestClient
 from apps.api.src.presentation.main import app
 
+from apps.api.src.core.config import settings
+
 client = TestClient(app)
+
+def get_auth_headers():
+    if settings.TELEGRAM_WEBHOOK_SECRET:
+        return {"X-Telegram-Bot-Api-Secret-Token": settings.TELEGRAM_WEBHOOK_SECRET}
+    return {}
 
 
 def test_telegram_webhook_accepts_valid_text_update():
@@ -16,7 +23,7 @@ def test_telegram_webhook_accepts_valid_text_update():
         }
     }
 
-    response = client.post("/api/v1/telegram/webhook", json=payload)
+    response = client.post("/api/v1/telegram/webhook", json=payload, headers=get_auth_headers())
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "accepted"
@@ -40,7 +47,7 @@ def test_telegram_webhook_detects_photo_media():
         }
     }
 
-    response = client.post("/api/v1/telegram/webhook", json=payload)
+    response = client.post("/api/v1/telegram/webhook", json=payload, headers=get_auth_headers())
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "accepted"
@@ -49,7 +56,7 @@ def test_telegram_webhook_detects_photo_media():
 
 def test_telegram_webhook_ignores_empty_or_non_message_updates():
     payload = {"update_id": 10003}  # Sin mensaje
-    response = client.post("/api/v1/telegram/webhook", json=payload)
+    response = client.post("/api/v1/telegram/webhook", json=payload, headers=get_auth_headers())
     assert response.status_code == 200
     assert response.json()["status"] == "ignored"
 

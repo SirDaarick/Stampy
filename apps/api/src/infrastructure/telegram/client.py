@@ -31,10 +31,17 @@ class TelegramBotClient:
         if reply_markup:
             payload["reply_markup"] = reply_markup
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(f"{self.base_url}/sendMessage", json=payload)
-            response.raise_for_status()
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(f"{self.base_url}/sendMessage", json=payload)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as exc:
+            import logging
+            logging.getLogger("stampy.telegram.client").warning(
+                f"No se pudo enviar mensaje al chat {chat_id}: {exc}"
+            )
+            return None
 
     async def edit_message_text(
         self,
@@ -57,10 +64,17 @@ class TelegramBotClient:
         if reply_markup:
             payload["reply_markup"] = reply_markup
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(f"{self.base_url}/editMessageText", json=payload)
-            response.raise_for_status()
-            return response.json()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(f"{self.base_url}/editMessageText", json=payload)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as exc:
+            import logging
+            logging.getLogger("stampy.telegram.client").warning(
+                f"No se pudo editar mensaje {message_id} en chat {chat_id}: {exc}"
+            )
+            return None
 
 
 telegram_client = TelegramBotClient()
