@@ -6,27 +6,78 @@ import {
   TrendingUp, 
   ShieldCheck, 
   AlertTriangle,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Sparkles,
+  Send
 } from 'lucide-react'
+
+interface ReceiptItem {
+  name: string
+  category: string
+  amount: string
+  status: string
+  time: string
+  mode: 'BUSINESS' | 'PERSONAL'
+}
+
+const PRESET_MESSAGES = [
+  { label: '🥩 Insumo Cocina ($450)', text: 'Gasté $450 en verdura e insumos de cocina', mode: 'BUSINESS' as const },
+  { label: '🚕 Uber Cliente ($180)', text: 'Uber $180.50 visita con cliente corporativo', mode: 'BUSINESS' as const },
+  { label: '🛒 Despensa Hogar ($350)', text: 'Pagué $350 en despensa del hogar', mode: 'PERSONAL' as const },
+  { label: '⛽ Gasolina Reparto ($850)', text: 'Gasolina $850 para camioneta de reparto', mode: 'BUSINESS' as const },
+  { label: '☕ Café y Cine ($220)', text: 'Café y boletos de cine $220 fin de semana', mode: 'PERSONAL' as const },
+]
 
 export function App() {
   const [activeMode, setActiveMode] = useState<'BUSINESS' | 'PERSONAL'>('BUSINESS')
   const [isSimulating, setIsSimulating] = useState(false)
+  const [customInput, setCustomInput] = useState('')
   const [lcdMessage, setLcdMessage] = useState<string | null>(null)
-  const [receiptsList, setReceiptsList] = useState([
-    { name: 'Central de Abastos S.A.', category: 'Insumo Cocina', amount: '$1,450.00', status: '[ ✦ OK ]', time: 'Hoy 11:42 AM' },
-    { name: 'CFE Suministrador', category: 'Gasto Fijo', amount: '$3,210.00', status: '[ ✦ OK ]', time: 'Ayer 04:15 PM' },
-    { name: 'Gasolinera Shell #402', category: 'Operativo', amount: '$850.00', status: '[ ✦ OK ]', time: '02 Oct 09:30 AM' },
+  const [receiptsList, setReceiptsList] = useState<ReceiptItem[]>([
+    { name: 'Central de Abastos S.A.', category: 'Insumo Cocina', amount: '$1,450.00', status: '[ ✦ OK ]', time: 'Hoy 11:42 AM', mode: 'BUSINESS' },
+    { name: 'CFE Suministrador', category: 'Gasto Fijo', amount: '$3,210.00', status: '[ ✦ OK ]', time: 'Ayer 04:15 PM', mode: 'BUSINESS' },
+    { name: 'Gasolinera Shell #402', category: 'Operativo', amount: '$850.00', status: '[ ✦ OK ]', time: '02 Oct 09:30 AM', mode: 'BUSINESS' },
+    { name: 'Supermercado Central', category: 'Despensa Personal', amount: '$620.00', status: '[ ✦ OK ]', time: '01 Oct 07:15 PM', mode: 'PERSONAL' },
   ])
 
-  const handleSimulate = async () => {
-    setIsSimulating(true)
-    setLcdMessage('AUDITANDO TICKET DE TELEGRAM... 🔍')
-    try {
-      const textToSimulate = activeMode === 'BUSINESS' 
-        ? 'Gasté $450 en fruta' 
-        : 'Pagué $350 en despensa'
+  const parseTextLocally = (text: string, mode: 'BUSINESS' | 'PERSONAL') => {
+    const numMatch = text.match(/\$?\s*(\d+([.,]\d{1,2})?)/)
+    const amountVal = numMatch ? parseFloat(numMatch[1].replace(',', '.')) : 450.00
+    const formattedAmount = `$${amountVal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
 
+    const lower = text.toLowerCase()
+    let name = 'Comercio Local / Varios'
+    let category = mode === 'BUSINESS' ? 'Insumos Generales' : 'Gasto Personal'
+
+    if (lower.includes('insumo') || lower.includes('cocina') || lower.includes('fruta') || lower.includes('carne') || lower.includes('verdura')) {
+      name = mode === 'BUSINESS' ? 'Central de Abastos / Insumos' : 'Supermercado Local'
+      category = mode === 'BUSINESS' ? 'Insumo Cocina' : 'Despensa Personal'
+    } else if (lower.includes('uber') || lower.includes('transporte') || lower.includes('taxi')) {
+      name = 'Uber Technologies Inc.'
+      category = mode === 'BUSINESS' ? 'Transporte & Visita' : 'Movilidad Personal'
+    } else if (lower.includes('gasolina') || lower.includes('shell') || lower.includes('combustible')) {
+      name = 'Gasolinera Shell #402'
+      category = mode === 'BUSINESS' ? 'Combustible Operativo' : 'Gasolina Auto Propio'
+    } else if (lower.includes('despensa') || lower.includes('hogar')) {
+      name = 'Supermercado Central'
+      category = 'Despensa Personal'
+    } else if (lower.includes('café') || lower.includes('cine') || lower.includes('cena')) {
+      name = 'Restaurante / Ocio'
+      category = 'Ocio sin culpa'
+    }
+
+    return { name, category, formattedAmount, amountVal }
+  }
+
+  const handleSimulate = async (customText?: string) => {
+    setIsSimulating(true)
+    setLcdMessage('AUDITANDO TICKET DE TELEGRAM... 🔍\nValidando reglas de segregación ' + activeMode + '...')
+
+    const textToSimulate = customText || customInput || (activeMode === 'BUSINESS' 
+      ? 'Gasté $450 en verdura e insumos' 
+      : 'Pagué $350 en despensa del hogar')
+
+    try {
       const res = await fetch('http://localhost:8000/api/v1/telegram/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -40,48 +91,57 @@ export function App() {
       if (res.ok) {
         const data = await res.json()
         setLcdMessage(data.stamped_response || '[ ✦ AUDITADO // OK ]')
+        const parsed = parseTextLocally(textToSimulate, activeMode)
         setReceiptsList(prev => [
           {
-            name: 'Comercio Local / Varios',
-            category: activeMode === 'BUSINESS' ? 'Insumo Cocina' : 'Despensa Personal',
-            amount: activeMode === 'BUSINESS' ? '$450.00' : '$350.00',
+            name: parsed.name,
+            category: parsed.category,
+            amount: parsed.formattedAmount,
             status: '[ ✦ OK ]',
-            time: 'Hace un momento'
+            time: 'Hace un momento',
+            mode: activeMode
           },
           ...prev
         ])
       } else {
-        // Fallback local si la API aún no está corriendo en segundo plano
-        setLcdMessage('[ ✦ AUDITADO // OK ]\n$450.00 MXN en Insumos guardado.')
+        // Fallback autónomo en cliente (Modo Demo / Vercel Standalone)
+        const parsed = parseTextLocally(textToSimulate, activeMode)
+        setLcdMessage(`[ ✦ AUDITADO // OK ]\n${parsed.formattedAmount} MXN registrado en ${parsed.category}.`)
         setReceiptsList(prev => [
           {
-            name: activeMode === 'BUSINESS' ? 'Mercado de Abastos / Insumos' : 'Supermercado Central / Despensa',
-            category: activeMode === 'BUSINESS' ? 'Insumo Cocina' : 'Despensa Personal',
-            amount: activeMode === 'BUSINESS' ? '$450.00' : '$350.00',
+            name: parsed.name,
+            category: parsed.category,
+            amount: parsed.formattedAmount,
             status: '[ ✦ OK ]',
-            time: 'Hace un momento'
+            time: 'Hace un momento',
+            mode: activeMode
           },
           ...prev
         ])
       }
     } catch {
-      setLcdMessage('[ ✦ AUDITADO // OK ]\n$450.00 MXN en Insumos guardado.')
+      // Si la API no está corriendo (despliegue estático Vercel)
+      const parsed = parseTextLocally(textToSimulate, activeMode)
+      setLcdMessage(`[ ✦ AUDITADO // OK ] (Modo Demo)\n${parsed.formattedAmount} MXN registrado en ${parsed.category}.`)
       setReceiptsList(prev => [
         {
-          name: activeMode === 'BUSINESS' ? 'Mercado de Abastos / Insumos' : 'Supermercado Central / Despensa',
-          category: activeMode === 'BUSINESS' ? 'Insumo Cocina' : 'Despensa Personal',
-          amount: activeMode === 'BUSINESS' ? '$450.00' : '$350.00',
+          name: parsed.name,
+          category: parsed.category,
+          amount: parsed.formattedAmount,
           status: '[ ✦ OK ]',
-          time: 'Hace un momento'
+          time: 'Hace un momento',
+          mode: activeMode
         },
         ...prev
       ])
     } finally {
       setIsSimulating(false)
+      setCustomInput('')
     }
   }
 
   const isBusiness = activeMode === 'BUSINESS'
+  const filteredReceipts = receiptsList.filter(r => r.mode === activeMode)
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8 flex flex-col items-center justify-start text-slate-800">
@@ -103,7 +163,7 @@ export function App() {
         <div className="tactile-inset p-1.5 flex items-center gap-2">
           <button
             onClick={() => setActiveMode('BUSINESS')}
-            className={`px-4 py-2 rounded-md font-semibold text-xs tracking-wider uppercase transition-all flex items-center gap-2 ${
+            className={`px-4 py-2 rounded-md font-semibold text-xs tracking-wider uppercase transition-all flex items-center gap-2 cursor-pointer ${
               isBusiness 
                 ? 'tactile-extrusion text-emerald-700 font-bold bg-white' 
                 : 'text-slate-500 hover:text-slate-800'
@@ -114,7 +174,7 @@ export function App() {
           </button>
           <button
             onClick={() => setActiveMode('PERSONAL')}
-            className={`px-4 py-2 rounded-md font-semibold text-xs tracking-wider uppercase transition-all flex items-center gap-2 ${
+            className={`px-4 py-2 rounded-md font-semibold text-xs tracking-wider uppercase transition-all flex items-center gap-2 cursor-pointer ${
               !isBusiness 
                 ? 'tactile-extrusion text-indigo-700 font-bold bg-white' 
                 : 'text-slate-500 hover:text-slate-800'
@@ -161,9 +221,51 @@ export function App() {
               </div>
             </div>
 
-            {/* Quick Action Button */}
+            {/* Presets Rápidos de Simulación */}
+            <div className="w-full flex flex-col gap-2 mb-4">
+              <span className="text-[10px] font-mono uppercase text-slate-500 font-semibold flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-emerald-600" /> Casos Rápidos para Probar:
+              </span>
+              <div className="flex flex-col gap-1.5">
+                {PRESET_MESSAGES.map((preset, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setActiveMode(preset.mode)
+                      handleSimulate(preset.text)
+                    }}
+                    disabled={isSimulating}
+                    className="text-left px-2.5 py-1.5 rounded text-[11px] font-mono tactile-inset hover:bg-slate-200 text-slate-700 transition-colors truncate cursor-pointer disabled:opacity-50"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Campo Libre para Escribir y Enviar */}
+            <div className="w-full flex gap-1.5 mb-3">
+              <input
+                type="text"
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSimulate()}
+                placeholder="Ej: Gasté $450 en fruta..."
+                className="flex-1 px-3 py-2 text-xs rounded tactile-inset font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+              <button
+                onClick={() => handleSimulate()}
+                disabled={isSimulating}
+                className="px-3 py-2 rounded tactile-extrusion text-emerald-800 hover:bg-emerald-50 font-bold transition-all cursor-pointer disabled:opacity-50"
+                title="Enviar ticket"
+              >
+                <Send className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Quick Action Button Principal */}
             <button 
-              onClick={handleSimulate}
+              onClick={() => handleSimulate()}
               disabled={isSimulating}
               className="w-full py-2.5 px-4 tactile-extrusion text-emerald-800 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-emerald-50 transition-opacity disabled:opacity-50 cursor-pointer"
             >
@@ -259,13 +361,13 @@ export function App() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>Últimos Comprobantes Auditados</span>
+                <span>Últimos Comprobantes Auditados ({filteredReceipts.length})</span>
               </h3>
-              <span className="text-xs font-mono text-slate-500">Captura Telegram</span>
+              <span className="text-xs font-mono text-slate-500">Scope: {activeMode}</span>
             </div>
 
             <div className="space-y-3">
-              {receiptsList.map((item, idx) => (
+              {filteredReceipts.map((item, idx) => (
                 <div key={idx} className="tactile-inset p-3 flex items-center justify-between text-xs">
                   <div>
                     <div className="font-semibold text-slate-800">{item.name}</div>
