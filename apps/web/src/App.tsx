@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { 
   Building2, 
   User, 
@@ -10,15 +10,9 @@ import {
   Sparkles,
   Send
 } from 'lucide-react'
-
-interface ReceiptItem {
-  name: string
-  category: string
-  amount: string
-  status: string
-  time: string
-  mode: 'BUSINESS' | 'PERSONAL'
-}
+import { isDemoActive } from './demo/isDemoMode'
+import { mockDb, type ReceiptRecord } from './demo/mockDatabase'
+import { handleDemoTelegramSimulate } from './demo/mockApiHandler'
 
 const PRESET_MESSAGES = [
   { label: '🥩 Insumo Cocina ($450)', text: 'Gasté $450 en verdura e insumos de cocina', mode: 'BUSINESS' as const },
@@ -33,41 +27,13 @@ export function App() {
   const [isSimulating, setIsSimulating] = useState(false)
   const [customInput, setCustomInput] = useState('')
   const [lcdMessage, setLcdMessage] = useState<string | null>(null)
-  const [receiptsList, setReceiptsList] = useState<ReceiptItem[]>([
-    { name: 'Central de Abastos S.A.', category: 'Insumo Cocina', amount: '$1,450.00', status: '[ ✦ OK ]', time: 'Hoy 11:42 AM', mode: 'BUSINESS' },
-    { name: 'CFE Suministrador', category: 'Gasto Fijo', amount: '$3,210.00', status: '[ ✦ OK ]', time: 'Ayer 04:15 PM', mode: 'BUSINESS' },
-    { name: 'Gasolinera Shell #402', category: 'Operativo', amount: '$850.00', status: '[ ✦ OK ]', time: '02 Oct 09:30 AM', mode: 'BUSINESS' },
-    { name: 'Supermercado Central', category: 'Despensa Personal', amount: '$620.00', status: '[ ✦ OK ]', time: '01 Oct 07:15 PM', mode: 'PERSONAL' },
-  ])
+  const [demoActive, setDemoActive] = useState(true)
+  const [receiptsList, setReceiptsList] = useState<ReceiptRecord[]>([])
 
-  const parseTextLocally = (text: string, mode: 'BUSINESS' | 'PERSONAL') => {
-    const numMatch = text.match(/\$?\s*(\d+([.,]\d{1,2})?)/)
-    const amountVal = numMatch ? parseFloat(numMatch[1].replace(',', '.')) : 450.00
-    const formattedAmount = `$${amountVal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`
-
-    const lower = text.toLowerCase()
-    let name = 'Comercio Local / Varios'
-    let category = mode === 'BUSINESS' ? 'Insumos Generales' : 'Gasto Personal'
-
-    if (lower.includes('insumo') || lower.includes('cocina') || lower.includes('fruta') || lower.includes('carne') || lower.includes('verdura')) {
-      name = mode === 'BUSINESS' ? 'Central de Abastos / Insumos' : 'Supermercado Local'
-      category = mode === 'BUSINESS' ? 'Insumo Cocina' : 'Despensa Personal'
-    } else if (lower.includes('uber') || lower.includes('transporte') || lower.includes('taxi')) {
-      name = 'Uber Technologies Inc.'
-      category = mode === 'BUSINESS' ? 'Transporte & Visita' : 'Movilidad Personal'
-    } else if (lower.includes('gasolina') || lower.includes('shell') || lower.includes('combustible')) {
-      name = 'Gasolinera Shell #402'
-      category = mode === 'BUSINESS' ? 'Combustible Operativo' : 'Gasolina Auto Propio'
-    } else if (lower.includes('despensa') || lower.includes('hogar')) {
-      name = 'Supermercado Central'
-      category = 'Despensa Personal'
-    } else if (lower.includes('café') || lower.includes('cine') || lower.includes('cena')) {
-      name = 'Restaurante / Ocio'
-      category = 'Ocio sin culpa'
-    }
-
-    return { name, category, formattedAmount, amountVal }
-  }
+  useEffect(() => {
+    setDemoActive(isDemoActive())
+    setReceiptsList(mockDb.getAllReceipts())
+  }, [])
 
   const handleSimulate = async (customText?: string) => {
     setIsSimulating(true)
@@ -78,62 +44,56 @@ export function App() {
       : 'Pagué $350 en despensa del hogar')
 
     try {
-      const res = await fetch('http://localhost:8000/api/v1/telegram/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (demoActive) {
+        // MODO DEMO: Ejecuta contra la base de datos en archivo/memoria del frontend
+        const res = await handleDemoTelegramSimulate({
           chat_id: 12345678,
           text: textToSimulate,
-          active_mode: activeMode
+          active_mode: activeMode,
         })
-      })
-
-      if (res.ok) {
-        const data = await res.json()
-        setLcdMessage(data.stamped_response || '[ ✦ AUDITADO // OK ]')
-        const parsed = parseTextLocally(textToSimulate, activeMode)
-        setReceiptsList(prev => [
-          {
-            name: parsed.name,
-            category: parsed.category,
-            amount: parsed.formattedAmount,
-            status: '[ ✦ OK ]',
-            time: 'Hace un momento',
-            mode: activeMode
-          },
-          ...prev
-        ])
+        setLcdMessage(res.stamped_response)
+        setReceiptsList(mockDb.getAllReceipts())
       } else {
-        // Fallback autónomo en cliente (Modo Demo / Vercel Standalone)
-        const parsed = parseTextLocally(textToSimulate, activeMode)
-        setLcdMessage(`[ ✦ AUDITADO // OK ]\n${parsed.formattedAmount} MXN registrado en ${parsed.category}.`)
-        setReceiptsList(prev => [
-          {
-            name: parsed.name,
-            category: parsed.category,
-            amount: parsed.formattedAmount,
-            status: '[ ✦ OK ]',
-            time: 'Hace un momento',
-            mode: activeMode
-          },
-          ...prev
-        ])
+        // MODO PRODUCCIÓN: Llama a la API backend FastAPI
+        const res = await fetch('http://localhost:8000/api/v1/telegram/simulate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: 12345678,
+            text: textToSimulate,
+            active_mode: activeMode
+          })
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          setLcdMessage(data.stamped_response || '[ ✦ AUDITADO // OK ]')
+          await handleDemoTelegramSimulate({
+            chat_id: 12345678,
+            text: textToSimulate,
+            active_mode: activeMode,
+          })
+          setReceiptsList(mockDb.getAllReceipts())
+        } else {
+          // Fallback a demo handler
+          const demoRes = await handleDemoTelegramSimulate({
+            chat_id: 12345678,
+            text: textToSimulate,
+            active_mode: activeMode,
+          })
+          setLcdMessage(demoRes.stamped_response)
+          setReceiptsList(mockDb.getAllReceipts())
+        }
       }
     } catch {
-      // Si la API no está corriendo (despliegue estático Vercel)
-      const parsed = parseTextLocally(textToSimulate, activeMode)
-      setLcdMessage(`[ ✦ AUDITADO // OK ] (Modo Demo)\n${parsed.formattedAmount} MXN registrado en ${parsed.category}.`)
-      setReceiptsList(prev => [
-        {
-          name: parsed.name,
-          category: parsed.category,
-          amount: parsed.formattedAmount,
-          status: '[ ✦ OK ]',
-          time: 'Hace un momento',
-          mode: activeMode
-        },
-        ...prev
-      ])
+      // Fallback a demo handler en caso de error de red
+      const demoRes = await handleDemoTelegramSimulate({
+        chat_id: 12345678,
+        text: textToSimulate,
+        active_mode: activeMode,
+      })
+      setLcdMessage(demoRes.stamped_response)
+      setReceiptsList(mockDb.getAllReceipts())
     } finally {
       setIsSimulating(false)
       setCustomInput('')
@@ -142,6 +102,8 @@ export function App() {
 
   const isBusiness = activeMode === 'BUSINESS'
   const filteredReceipts = receiptsList.filter(r => r.mode === activeMode)
+  const metrics = mockDb.getMetrics()
+  const bridge = mockDb.getBridgeState()
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8 flex flex-col items-center justify-start text-slate-800">
@@ -153,9 +115,12 @@ export function App() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-              STAMPY <span className="text-xs font-mono uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">v0.1.0-alpha</span>
+              STAMPY 
+              <span className="text-xs font-mono uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">
+                {demoActive ? 'MODO DEMO 100% FRONT' : 'v0.1.0-alpha'}
+              </span>
             </h1>
-            <p className="text-xs text-slate-500 font-medium">Auditor Financiero & Gestor de Gastos</p>
+            <p className="text-xs text-slate-500 font-medium">Auditor Financiero & Gestor de Gastos Dual-Scope</p>
           </div>
         </div>
 
@@ -211,7 +176,7 @@ export function App() {
                 <span>// ESTADO EN VIVO</span>
                 <span className="animate-pulse text-emerald-300">● ACTIVO</span>
               </div>
-              <p className="font-mono leading-relaxed whitespace-pre-line">
+              <p className="font-mono leading-relaxed whitespace-pre-line text-emerald-300">
                 {lcdMessage || (isBusiness 
                   ? 'MODO NEGOCIO AUDITADO. PRIME COST VIGILADO AL 54.2% (OBJETIVO <= 60%).' 
                   : 'MODO PERSONAL CALIBRADO. DISTRIBUCIÓN 50/30/20 EQUILIBRADA ESTE MES.')}
@@ -250,8 +215,8 @@ export function App() {
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSimulate()}
-                placeholder="Ej: Gasté $450 en fruta..."
-                className="flex-1 px-3 py-2 text-xs rounded tactile-inset font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                placeholder="Ej: Gasté $450 en verdura..."
+                className="flex-1 px-3 py-2 text-xs rounded tactile-inset font-mono text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder-slate-400"
               />
               <button
                 onClick={() => handleSimulate()}
@@ -281,14 +246,14 @@ export function App() {
                 <ArrowRightLeft className="w-4 h-4 text-emerald-600" />
                 <span>Puente del Sueldo</span>
               </div>
-              <span className="text-[10px] font-mono uppercase bg-slate-200 text-slate-700 px-2 py-0.5 rounded">Atómico</span>
+              <span className="text-[10px] font-mono uppercase bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-semibold">{bridge.status}</span>
             </div>
             <p className="text-xs text-slate-600 mb-3">
               Nómina del negocio transferida directamente como ingreso a tu patrimonio personal.
             </p>
             <div className="tactile-inset p-3 flex items-center justify-between">
               <span className="text-xs text-slate-500 font-mono">Último retiro:</span>
-              <span className="font-mono font-bold text-sm text-emerald-700">$25,000.00 MXN</span>
+              <span className="font-mono font-bold text-sm text-emerald-700">{bridge.formattedWithdrawal}</span>
             </div>
           </div>
         </div>
@@ -306,17 +271,17 @@ export function App() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                 <div className="tactile-inset p-4">
                   <div className="text-[10px] font-mono text-slate-500 uppercase">Insumos (COGS)</div>
-                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">31.4%</div>
-                  <div className="text-[10px] text-emerald-600 font-medium mt-1">✓ Bajo control</div>
+                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">{metrics.business.cogsPercentage}%</div>
+                  <div className="text-[10px] text-emerald-600 font-medium mt-1">{metrics.business.primeCostStatus}</div>
                 </div>
                 <div className="tactile-inset p-4">
                   <div className="text-[10px] font-mono text-slate-500 uppercase">Nómina Total</div>
-                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">22.8%</div>
+                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">{metrics.business.payrollPercentage}%</div>
                   <div className="text-[10px] text-emerald-600 font-medium mt-1">✓ En rango esperado</div>
                 </div>
                 <div className="tactile-inset p-4 border border-emerald-300">
                   <div className="text-[10px] font-mono text-emerald-800 uppercase font-bold">Prime Cost Total</div>
-                  <div className="text-2xl font-bold font-mono text-emerald-700 mt-1">54.2%</div>
+                  <div className="text-2xl font-bold font-mono text-emerald-700 mt-1">{metrics.business.primeCostTotal}%</div>
                   <div className="text-[10px] text-emerald-700 font-medium mt-1">Objetivo: &le; 60%</div>
                 </div>
               </div>
@@ -324,17 +289,17 @@ export function App() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                 <div className="tactile-inset p-4">
                   <div className="text-[10px] font-mono text-slate-500 uppercase">50% Necesidades</div>
-                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">48.5%</div>
+                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">{metrics.personal.needsPercentage}%</div>
                   <div className="text-[10px] text-indigo-600 font-medium mt-1">Vivienda, despensa, salud</div>
                 </div>
                 <div className="tactile-inset p-4">
                   <div className="text-[10px] font-mono text-slate-500 uppercase">30% Deseos</div>
-                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">28.0%</div>
+                  <div className="text-2xl font-bold font-mono text-slate-900 mt-1">{metrics.personal.wantsPercentage}%</div>
                   <div className="text-[10px] text-indigo-600 font-medium mt-1">Ocio sin culpa</div>
                 </div>
                 <div className="tactile-inset p-4 border border-indigo-300">
                   <div className="text-[10px] font-mono text-indigo-800 uppercase font-bold">20% Ahorro / Inversión</div>
-                  <div className="text-2xl font-bold font-mono text-indigo-700 mt-1">23.5%</div>
+                  <div className="text-2xl font-bold font-mono text-indigo-700 mt-1">{metrics.personal.savingsPercentage}%</div>
                   <div className="text-[10px] text-indigo-700 font-medium mt-1">Superando la meta</div>
                 </div>
               </div>
@@ -367,14 +332,14 @@ export function App() {
             </div>
 
             <div className="space-y-3">
-              {filteredReceipts.map((item, idx) => (
-                <div key={idx} className="tactile-inset p-3 flex items-center justify-between text-xs">
+              {filteredReceipts.map((item) => (
+                <div key={item.id} className="tactile-inset p-3 flex items-center justify-between text-xs">
                   <div>
                     <div className="font-semibold text-slate-800">{item.name}</div>
                     <div className="text-[10px] text-slate-500 font-mono">{item.category} • {item.time}</div>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="font-bold font-mono text-slate-900">{item.amount}</span>
+                    <span className="font-bold font-mono text-slate-900">{item.formattedAmount}</span>
                     <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
                       {item.status}
                     </span>
